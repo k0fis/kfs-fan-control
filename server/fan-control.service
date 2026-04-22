@@ -1,0 +1,14 @@
+[Unit]
+Description=Fan Control Daemon (Arduino USB)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/fan-control/fan-control.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
