@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Arduino Lint
+        uses: arduino/arduino-lint-action@v2
+        with:
+          compliance: specification
+          project-type: sketch
+          recursive: true
+
+      - name: Install cppcheck
+        run: sudo apt-get install -y cppcheck
+
+      - name: Static analysis (cppcheck)
+        run: >-
+          cppcheck
+          --language=c++
+          --enable=warning,performance,portability
+          --error-exitcode=1
+          --suppress=missingIncludeSystem
+          --suppress=unknownMacro
+          --inline-suppr
+          kfs_fan_mosfet/*.ino
+          kfs_fan_4pin/*.ino
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      matrix:
+        sketch:
+          - kfs_fan_mosfet
+          - kfs_fan_4pin
+        board:
+          - fqbn: "arduino:avr:nano"
+            name: nano
+          - fqbn: "arduino:avr:uno"
+            name: uno
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install board core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "OneWire"
+          arduino-cli lib install "DallasTemperature"
+
+      - name: Build ${{ matrix.sketch }} for ${{ matrix.board.name }}
+        run: >-
+          arduino-cli compile
+          --fqbn "${{ matrix.board.fqbn }}"
+          --output-dir "build/${{ matrix.board.name }}"
+          "${{ matrix.sketch }}/"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: "${{ matrix.sketch }}-${{ matrix.board.name }}"
+          path: "build/${{ matrix.board.name }}/*.hex"

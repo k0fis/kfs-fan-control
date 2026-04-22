@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        sketch:
+          - kfs_fan_mosfet
+          - kfs_fan_4pin
+        board:
+          - fqbn: "arduino:avr:nano"
+            name: nano
+          - fqbn: "arduino:avr:uno"
+            name: uno
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install board core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "OneWire"
+          arduino-cli lib install "DallasTemperature"
+
+      - name: Build ${{ matrix.sketch }} for ${{ matrix.board.name }}
+        run: >-
+          arduino-cli compile
+          --fqbn "${{ matrix.board.fqbn }}"
+          --output-dir "build/${{ matrix.board.name }}"
+          "${{ matrix.sketch }}/"
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for f in build/${{ matrix.board.name }}/*.hex; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            cp "$f" "release/${{ matrix.sketch }}-${{ matrix.board.name }}-${name}"
+          done
+          ls -la release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.hex
+          generate_release_notes: true
