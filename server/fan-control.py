@@ -2,8 +2,8 @@
 """fan-control.py — server fan control daemon via Arduino USB serial.
 
 Reads CPU/disk temperatures, controls fan via Arduino 4-pin PWM,
-monitors ambient temperature from DS18B20 sensor on Arduino,
-sends Telegram alarm if cooling is ineffective.
+monitors ambient temperature from DS18B20 sensor on Arduino.
+Alarm flag in status.json — Telegram sent by alarm-check.py.
 
 Runs as systemd service (continuous daemon).
 Writes /opt/fan-control/status.json for server-info.py integration.
@@ -53,15 +53,30 @@ STATUS_WRITE_OFF = 600  # seconds when fan is off (10 min)
 
 # Alarm: temp not decreasing after N seconds of fan running
 ALARM_NO_DROP_SEC = 600  # 10 minutes
-ALARM_CONFIG = '/opt/alarms/config.json'
 
 # === LOGGING ===
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-)
+_SYSLOG_PRIO = {
+    logging.DEBUG: '<7>',
+    logging.INFO: '<6>',
+    logging.WARNING: '<4>',
+    logging.ERROR: '<3>',
+    logging.CRITICAL: '<2>',
+}
+
+
+class _SystemdFormatter(logging.Formatter):
+    """Prefix lines with syslog priority for systemd journal."""
+
+    def format(self, record):
+        prefix = _SYSLOG_PRIO.get(record.levelno, '<6>')
+        return prefix + super().format(record)
+
+
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(_SystemdFormatter('%(asctime)s %(levelname)s %(message)s',
+                                        datefmt='%Y-%m-%d %H:%M:%S'))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger('fan-control')
 
 # === GLOBALS (updated by serial reader thread) ===
@@ -192,45 +207,6 @@ def write_status(fan_on, pwm, cpu_t, disk_t, alarm_active=False,
         log.error('Failed to write status: %s', e)
 
 
-# === TELEGRAM ===
-
-def send_telegram(message):
-    """Send Telegram notification using alarm system config."""
-    try:
-        import requests  # noqa: delay import — may not be installed
-    except ImportError:
-        log.error('python3-requests not installed, cannot send Telegram')
-        return False
-
-    try:
-        with open(ALARM_CONFIG) as f:
-            config = json.load(f)
-        tg = config.get('telegram', {})
-        token = tg.get('token', '')
-        chat_id = tg.get('chat_id', '')
-        if not token or not chat_id:
-            log.warning('Telegram not configured in %s', ALARM_CONFIG)
-            return False
-        resp = requests.post(
-            f'https://api.telegram.org/bot{token}/sendMessage',
-            json={
-                'chat_id': chat_id,
-                'text': message,
-                'parse_mode': 'HTML',
-                'disable_web_page_preview': True,
-            },
-            timeout=10,
-        )
-        if resp.ok:
-            log.info('Telegram sent')
-        else:
-            log.error('Telegram failed: %s', resp.text)
-        return resp.ok
-    except Exception as e:
-        log.error('Telegram error: %s', e)
-        return False
-
-
 # === MAIN LOOP ===
 
 def main():
@@ -250,7 +226,6 @@ def main():
     # Alarm tracking
     fan_on_since = None
     fan_on_temp = None       # CPU temp when fan turned on
-    alarm_sent = False
 
     while True:
         cpu_t = get_cpu_temp()
@@ -282,7 +257,6 @@ def main():
             cooldown_start = None
             fan_on_since = time.time()
             fan_on_temp = cpu_t
-            alarm_sent = False
             log.info('FAN ON (PWM=%d/%d) — CPU:%.1f°C Disk:%s Ambient:%s RPM:%s',
                      pwm, PWM_MAX, cpu_t or 0,
                      f'{disk_t}°C' if disk_t else 'N/A',
@@ -307,23 +281,11 @@ def main():
                         f'Fan běží {int(elapsed / 60)} min, '
                         f'CPU {cpu_t:.1f}°C (při zapnutí: {fan_on_temp:.1f}°C)'
                     )
-                    if not alarm_sent:
-                        log.warning('ALARM: %s', alarm_detail)
-                        send_telegram(
-                            '\U0001f525 <b>Fan control: teplota neklesá</b>\n'
-                            + alarm_detail
-                        )
-                        alarm_sent = True
+                    log.warning('ALARM: %s', alarm_detail)
                 elif cpu_t < fan_on_temp:
                     # Temp is decreasing — update baseline
                     fan_on_temp = cpu_t
                     fan_on_since = time.time()  # reset timer
-                    if alarm_sent:
-                        log.info('Alarm cleared — temp dropping: %.1f°C', cpu_t)
-                        send_telegram(
-                            f'\u2705 Fan control — teplota klesá ({cpu_t:.1f}°C)'
-                        )
-                        alarm_sent = False
 
         elif fan_on and below_off:
             # === BELOW SAFE — cooldown ===
@@ -339,9 +301,6 @@ def main():
                 cooldown_start = None
                 fan_on_since = None
                 fan_on_temp = None
-                if alarm_sent:
-                    send_telegram('\u2705 Fan control — teplota v normálu')
-                    alarm_sent = False
                 log.info('FAN OFF — CPU:%.1f°C Disk:%s Ambient:%s',
                          cpu_t or 0,
                          f'{disk_t}°C' if disk_t else 'N/A',
