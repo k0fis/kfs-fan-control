@@ -15,7 +15,7 @@
  *   MOSFET drain    -> fan (-), MOSFET source -> GND
  *   Fan (+)         -> +12V
  *   1N4007 flyback  -> cathode on +12V, anode on drain
- *   DS18B20 DQ      -> D4 (4.7k pull-up to 5V)
+ *   DS18B20 DQ      -> D3 (4.7k pull-up to 5V)
  *   DS18B20 VCC     -> 5V, GND -> GND
  *   Common GND: Arduino + 12V supply + MOSFET source
  */
@@ -24,7 +24,7 @@
 #include <DallasTemperature.h>
 
 static const int FAN_PIN = 9;
-static const int TEMP_PIN = 4;
+static const int TEMP_PIN = 3;
 static const unsigned long TEMP_INTERVAL = 5000;  // ms
 
 OneWire oneWire(TEMP_PIN);

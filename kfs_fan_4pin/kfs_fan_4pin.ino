@@ -17,7 +17,7 @@
  *   Fan GND (black)    -> 12V supply (-) + Arduino GND (common ground!)
  *   Fan PWM (blue)     -> D9 (Timer1 OC1A, 25 kHz)
  *   Fan Tacho (green)  -> D2 (optional, interrupt pin for RPM reading)
- *   DS18B20 DQ         -> D4 (4.7k pull-up to 5V)
+ *   DS18B20 DQ         -> D3 (4.7k pull-up to 5V)
  *   DS18B20 VCC        -> 5V, GND -> GND
  */
 
@@ -26,7 +26,7 @@
 
 static const int FAN_PWM_PIN = 9;     // Timer1 OC1A — 25 kHz PWM output
 static const int FAN_TACHO_PIN = 2;   // Interrupt pin for RPM (optional)
-static const int TEMP_PIN = 4;        // DS18B20 data pin
+static const int TEMP_PIN = 3;        // DS18B20 data pin
 static const unsigned long TEMP_INTERVAL = 5000;  // ms
 
 static const int PWM_MAX = 320;       // Timer1 TOP = 100% duty cycle
