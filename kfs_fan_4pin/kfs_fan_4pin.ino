@@ -106,8 +106,10 @@ void loop() {
             tachoCount = 0;
             interrupts();
             unsigned long rpm = (count * 60000UL) / (elapsed * 2);
-            Serial.print("RPM:");
-            Serial.println(rpm);
+            if (rpm <= 4000) {
+                Serial.print("RPM:");
+                Serial.println(rpm);
+            }
         }
         lastTachoRead = now;
         lastTempRead = now;
