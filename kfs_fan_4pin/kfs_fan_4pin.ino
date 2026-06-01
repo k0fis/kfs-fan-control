@@ -28,6 +28,7 @@ static const int FAN_PWM_PIN = 9;     // Timer1 OC1A — 25 kHz PWM output
 static const int FAN_TACHO_PIN = 2;   // Interrupt pin for RPM (optional)
 static const int TEMP_PIN = 3;        // DS18B20 data pin
 static const unsigned long TEMP_INTERVAL = 5000;  // ms
+static const unsigned long TEMP_CONVERSION = 750;  // DS18B20 12-bit conversion time
 
 static const int PWM_MAX = 320;       // Timer1 TOP = 100% duty cycle
 
@@ -35,11 +36,15 @@ OneWire oneWire(TEMP_PIN);
 DallasTemperature sensors(&oneWire);
 
 static unsigned long lastTempRead = 0;
+static bool tempRequested = false;
+static unsigned long tempRequestTime = 0;
 static int currentPWM = 0;
 
-// Tachometer — pulse counting
+// Tachometer — pulse counting + median filter
 static volatile unsigned long tachoCount = 0;
 static unsigned long lastTachoRead = 0;
+static unsigned long rpmHistory[3] = {0, 0, 0};
+static int rpmIdx = 0;
 
 static void tachoISR() {
     tachoCount++;
@@ -89,29 +94,44 @@ void loop() {
 
     // Periodic temperature + RPM reading
     unsigned long now = millis();
-    if (now - lastTempRead >= TEMP_INTERVAL) {
-        // DS18B20 temperature
+
+    // Request temperature conversion (non-blocking)
+    if (!tempRequested && now - lastTempRead >= TEMP_INTERVAL) {
         sensors.requestTemperatures();
+        tempRequested = true;
+        tempRequestTime = now;
+    }
+
+    // Read temperature after conversion completes
+    if (tempRequested && now - tempRequestTime >= TEMP_CONVERSION) {
         float temp = sensors.getTempCByIndex(0);
         if (temp > -100) {
             Serial.print("TEMP:");
             Serial.println(temp, 2);
         }
-
-        // RPM from tachometer (2 pulses per revolution for most fans)
-        unsigned long elapsed = now - lastTachoRead;
-        if (elapsed > 0) {
-            noInterrupts();
-            unsigned long count = tachoCount;
-            tachoCount = 0;
-            interrupts();
-            unsigned long rpm = (count * 60000UL) / (elapsed * 2);
-            if (rpm <= 4000) {
-                Serial.print("RPM:");
-                Serial.println(rpm);
-            }
-        }
-        lastTachoRead = now;
+        tempRequested = false;
         lastTempRead = now;
+    }
+
+    // RPM from tachometer every 5 seconds (2 pulses per revolution)
+    // Median of last 3 readings to filter noise
+    if (now - lastTachoRead >= TEMP_INTERVAL) {
+        unsigned long elapsed = now - lastTachoRead;
+        noInterrupts();
+        unsigned long count = tachoCount;
+        tachoCount = 0;
+        interrupts();
+        unsigned long rpm = (count * 60000UL) / (elapsed * 2);
+        rpmHistory[rpmIdx] = rpm;
+        rpmIdx = (rpmIdx + 1) % 3;
+        // Median of 3
+        unsigned long a = rpmHistory[0], b = rpmHistory[1], c = rpmHistory[2];
+        unsigned long median;
+        if ((a >= b && a <= c) || (a <= b && a >= c)) median = a;
+        else if ((b >= a && b <= c) || (b <= a && b >= c)) median = b;
+        else median = c;
+        Serial.print("RPM:");
+        Serial.println(median);
+        lastTachoRead = now;
     }
 }
